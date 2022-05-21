@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>Kambarys</title>
+        <script>
+            var connection;
+
+            class SocketEvent
+            {
+                constructor(event, data){
+                    this.Name = event;
+                    this.Data = JSON.stringify(data);
+                }
+
+                static Deserialize(str) {
+                    var result = JSON.parse(str);
+                    try{
+                        result.Data = JSON.parse(result.Data);
+                    }catch{
+
+                    }
+                    return result;
+                }
+            }
+
+            class Connection {
+                constructor(){
+                    this.ws = new WebSocket(`ws://${window.location.host}/ws${window.location.search}`);
+                    this.ws.onopen = () => {
+                        this.isOpen = true;
+                        this.updateUsername();
+                    }
+                    this.ws.onmessage = this.handleMessage.bind(this);
+                }
+
+                handleMessage(ev) {
+                    if(!ev.data)
+                        return;
+
+                    var msg = SocketEvent.Deserialize(ev.data);
+                    if(!msg)
+                        return;
+
+                    switch(msg.Name) {
+                        case 'set-id':
+                            this.id = msg.Data;
+                            break;
+                        case 'set-choices':
+                            this.setChoices(msg.Data);
+                            break;
+                        case 'set-players':
+                            this.setPlayers(msg.Data);
+                            break;
+                        case 'set-voting':
+                            this.setVoting(msg.Data);
+                            break;
+                        case 'start-voting':
+                            this.resetVoting(msg.Data);
+                            break;
+                        default:
+                            console.log('Unknown command', msg);
+                            break;
+                    }
+                }
+
+                setPlayers(players) {
+                    this.players.setPlayers(players);
+                }
+
+                setChoices(choices) {
+                    this.choices.setChoices(choices);
+                }
+
+                resetVoting(id) {
+                    this.votingId = id;
+                    this.players.resetVoting();
+                    document.getElementById('voting').className = 'in_progress'
+                }
+
+                setVoting(voting) {
+                    if(this.votingId && this.votingId != voting.id){
+                        console.error(`neteiingas balsavimas! ${this.votingId} != ${voting.id}`);
+                    }else{
+                        this.votingId = voting.id;
+                        this.players.setVoting(voting.votes);
+                        document.getElementById('voting').className = voting.status;
+                    }
+                }
+
+                updateUsername() {
+                    if(this.user?.username && this.isOpen)
+                        this.send(new SocketEvent('set-name', this.user.username));
+                }
+
+                send(event) {
+                    if(!(event instanceof SocketEvent))
+                        throw 'Invalid event!';
+
+                    this.ws.send(JSON.stringify(event));
+                }
+
+                sendChoices(choices) {
+                    if(this.isOpen)
+                        this.send(new SocketEvent('set-choices', choices));
+                }
+
+                sendVote(vote){
+                    if(this.isOpen)
+                        this.send(new SocketEvent('set-vote', { Id: this.votingId, Result: vote }));
+                }
+
+                sendStartVoting(){
+                    if(this.isOpen)
+                        this.send(new SocketEvent('start-voting'));
+                }
+
+                sendEndVoting(){
+                    if(this.isOpen)
+                        this.send(new SocketEvent('end-voting'));
+                }
+
+            }
+
+            class Players{
+                constructor(){
+                    this.players = [];
+                    this.html = document.getElementById('players');
+                }
+
+                setPlayers(data){
+                    data = data || [];
+                    data.forEach(element => {
+                        var player = this.players.find(x => x.id == element.Id);
+                        if(!player)
+                            player = this.addPlayer(element);
+                        else
+                            player.setData(element);
+                    });
+
+                    for(var i = this.players.length - 1; i >=0; i--) {
+                        var player = this.players[i];
+                        if(!data.some(x => x.Id == player.id))
+                            this.removePlayer(player);
+                    }
+                }
+
+                addPlayer(data){
+                    var player = new Player(data);
+                    this.players.push(player);
+                    this.html.appendChild(player.toHtml());
+                    return player;
+                }
+
+                removePlayer(player) {
+                    var index = this.players.indexOf(player);
+                    this.players.splice(index, 1);
+                    this.html.removeChild(player.toHtml());
+                }
+
+                resetVoting() {
+                    this.players.forEach(x => x.vote = '')
+                }
+
+                setVoting(voting) {
+                    voting.forEach(vote => {
+                        var player = this.players.find(x => x.id == vote.playerId);
+                        if(player)
+                            player.vote = vote.vote;
+                    })
+                }
+            }
+
+            class Player{
+                constructor(data){
+                    this._vote = document.createElement('span');
+                    this._name = document.createElement('span');
+                    this._div = document.createElement('div');
+                    this._div.appendChild(this._vote);
+                    this._div.appendChild(this._name);
+                    this._name.className = "name";
+                    this._vote.className = "vote";
+
+                    if(data){
+                        this._div.title = data.Id;
+                        this.setData(data);
+                    }
+
+                    if(this.id == connection.id) {
+                        this._div.classList.add('me')
+                    }
+                }
+                
+                get id(){
+                    return this._div.title;
+                }
+                
+                set vote(val){
+                    this._vote.innerText = val;
+                    this._vote.classList.toggle('voted', !!val);
+
+                    if(this.id == connection.id)
+                        connection.choices.setSelected(val);
+                }
+
+                setData(data) {
+                    this._name.innerText = data.Name;
+                }
+
+                toHtml(){
+                    return this._div;
+                }
+            }
+
+            class Dialog {
+                constructor(connection, id){
+                    this.connection = connection;
+                    this.dlg = document.getElementById(`${id}-dlg`);
+                    if(!this.dlg)
+                        throw `Failed to find dialog '${id}-dlg'`;
+
+                    this.dlg.addEventListener('close', () => {
+                        if(this.dlg.returnValue == 'ok')
+                            this.setValue(document.getElementById(`${id}-txt`).value);
+                    });
+                }
+
+                setValue(val) { throw 'NotImplemented' }
+            }
+
+            class Choices extends Dialog {
+                constructor(connection) {
+                    super(connection, 'choices')
+                }
+
+                setValue(val) {
+                    let choices = val.split('/');
+                    this.connection.sendChoices(choices);
+                }
+
+                setChoices(choices) {
+                    if(choices) {
+                        this.dlg.close();
+                        var div = document.getElementById('choices');
+
+                        while(div.hasChildNodes())
+                            div.removeChild(div.childNodes[0]);
+                            
+                        var cards = choices.forEach(x => {
+                            var choice = document.createElement('div');
+                            choice.innerText = x;
+                            choice.onclick = () => connection.sendVote(x);
+
+                            div.appendChild(choice);
+                        });
+
+                    } else {
+                        this.showDialog();
+                    }
+                }
+
+                setSelected(val){
+                    var div = document.getElementById('choices');
+                    for(var i = 0; i < div.childNodes.length; i++){
+                        let item = div.childNodes[i]
+                        item.classList.toggle('selected', item.innerText == val);
+                    }
+                }
+
+                showDialog(){
+                    this.dlg.showModal();
+                }
+            }
+
+            class User extends Dialog {
+                constructor(connection) {
+                    super(connection, 'username');
+                    if(!this.username)
+                        this.dlg.showModal();
+                }
+
+                get username(){
+                    return localStorage['username'];
+                }
+
+                setValue(name) {
+                    localStorage['username'] = name;
+                    this.connection.updateUsername();
+                }
+
+            }
+
+            function init()
+            {
+                connection = new Connection();
+                connection.user = new User(connection);
+                connection.choices = new Choices(connection);
+                connection.players = new Players(connection);
+
+                let params = new URLSearchParams(window.location.search);
+                let roomName = params.get('id');
+                document.title = `Kambarys ${roomName}`;
+                document.getElementById('title').innerText = document.title;
+            }
+        </script>
+        <style>
+
+            input, button {
+                font-size: 1em;
+            }
+
+            #voting > button, .change-cards{
+                border: 1px solid black;
+                border-radius: 10px;
+                padding: 1em;
+                display: none;
+                font-size: 1em;;
+            }
+
+            .start {
+                color: white;
+                background-color: green;
+            }
+            .end {
+                color: white;
+                background-color: darkred;
+            }
+
+            #voting.ended .start, #voting.ended .change-cards{
+                display: inline;
+            }
+            #voting.in_progress .end {
+                display: inline;
+            }
+
+            #players {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 1em;
+                margin: 0 0 2em 0;
+            }
+
+            #players > div {
+                min-width: 5em;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                text-align: center;
+            }
+
+            #players .vote {
+                height: 7em;
+                width: 100%;
+                border: 0.1em solid black;
+                border-radius: 10%;
+                justify-content: center;
+                align-items: center;
+                display: flex;
+                background-color: lightgray;
+                background-image: repeating-linear-gradient(45deg, rgba(227,227,255,1) 11%, rgba(227,226,255,1) 19%, rgba(245,245,255,1) 19%, rgba(245,245,255,1) 27%);
+                box-sizing: border-box;
+            }
+            
+            #players .vote.voted {
+                border: 0.5em solid blue;
+            }
+            
+            .in_progress #players .vote {
+                color: transparent;
+            }
+
+            #players .me .name {
+                font-weight: bold;
+            }
+
+            #players .name {
+                text-decoration: underline;
+            }
+
+            #voting.ended + .choices{
+                display: none;
+            }
+
+            #choices {
+                display: flex;
+                gap: 1em;
+                padding: 0 0 2em 0;
+                overflow-x: auto;
+            }
+            
+            #choices > div {
+                min-width: 2.5em;
+                height: 8vh;
+                border: 1px solid black;
+                border-radius: 10px;
+                
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            #choices > div.selected {
+                color: white;
+                background: darkblue;
+            }
+
+            @media only screen and (max-width: 1000px) {
+                body {
+                    font-size: 35pt;
+                }    
+            }
+            
+        </style>
+    </head>
+    <body onload="init()">
+        <h1 id="title"></h1>
+        <dialog id="username-dlg">
+            <form method="dialog">
+                <label>
+                    Vartotojo vardas:
+                    <input id="username-txt" type="text"/>
+                    <br />
+                    <button value="ok">OK</button>
+                    <button value="cancel">Cancel</button>
+                </label>
+            </form>
+        </dialog>
+
+        <dialog id="choices-dlg">
+            <form method="dialog">
+                <label>
+                    Kortelės
+                    <input type="text" id ="choices-txt" value="0.5/1/2/3" autocomplete="work">
+                    <br />
+                    <button value="ok">OK</button>
+                    <button value="cancel">Cancel</button>
+                </label>
+            </form>
+        </dialog>
+
+        <div id="voting">
+            <h2>Žmonės</h2>
+            <div id="players"></div>       
+            <button type="button" class="start" onclick="connection.sendStartVoting()">Pradėti naują balsavimą</button>
+            <button type="button" class="end" onclick="connection.sendEndVoting()">Baigti balsavimą</button>
+            <button class="change-cards" onclick="connection.choices.showDialog()">Keisti kortas</button>
+        </div>
+
+        <div class="choices">
+            <h2>Balsuoti</h2>
+            <div id="choices"></div>
+        </div>
+        
+    </body>
+</html>
