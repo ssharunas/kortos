@@ -18,7 +18,7 @@ public class Participant
     public Guid Id{ get; }
     public string Name{ get; set; }
     public string Vote { get ; set; }
-    public bool IsClosed => _socket.CloseStatus.HasValue || RoomManager.IsStopping;
+    public bool IsClosed => _socket.CloseStatus.HasValue || _socket.State == WebSocketState.Aborted || RoomManager.IsStopping;
 
     public void SetName(string name)
     {
@@ -145,6 +145,12 @@ public class Participant
             while(!result.EndOfMessage && !result.CloseStatus.HasValue);
         }
         catch(OperationCanceledException) { /* Server is shutting down. */ }
+        catch(WebSocketException ex)
+        {
+            /* Client disconnected. */
+            Console.WriteLine($"Participant {Id} disconnected: " +  ex.Message);
+            return null;
+        }
 
         var text = Encoding.UTF8.GetString(data.ToArray());
         Console.WriteLine($"Participant {Id} reveived: '{text ?? "<null>"}'");

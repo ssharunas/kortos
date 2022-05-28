@@ -26,12 +26,37 @@
 
             class Connection {
                 constructor(){
+                    this.initWebSocket();
+                }
+
+                initWebSocket(){
+                    if(this.ws){
+                        this.ws.close();
+                    }
+
                     this.ws = new WebSocket(`ws://${window.location.host}/ws${window.location.search}`);
-                    this.ws.onopen = () => {
+                    this.ws.onopen = (ev) => {
                         this.isOpen = true;
+                        console.log(ev)
+                        document.body.classList.toggle('offline', false);
                         this.updateUsername();
                     }
                     this.ws.onmessage = this.handleMessage.bind(this);
+                    this.ws.onclose = this.handleClose.bind(this);
+                }
+
+                handleClose(ev){
+                    document.body.classList.toggle('offline', true);
+
+                    if(ev.reason)
+                        alert('Atsijungta nuo serverio!\n' + ev.reason);
+
+                    console.log(ev);
+
+                    setTimeout(() => {
+                        console.log("Trying to reconnect...")
+                        this.initWebSocket();
+                    }, 1000);
                 }
 
                 handleMessage(ev) {
@@ -80,7 +105,7 @@
 
                 setVoting(voting) {
                     if(this.votingId && this.votingId != voting.id){
-                        console.error(`neteiingas balsavimas! ${this.votingId} != ${voting.id}`);
+                        console.error(`Neteisingas balsavimas! ${this.votingId} != ${voting.id}`);
                     }else{
                         this.votingId = voting.id;
                         this.players.setVoting(voting.votes);
@@ -122,10 +147,40 @@
 
             }
 
+            class Statistics {
+                constructor(){
+
+                }
+
+                set average(value) { document.getElementById('average').innerText = value; }
+
+                set median(value){ document.getElementById('median').innerText = value; }
+
+                set mode(value){ document.getElementById('mode').innerText = value; }
+
+                setStatistics(votes) {
+                    if(votes && votes.length){
+                        votes.sort();
+                        this.average = votes.reduce((a, b) => a + b) / votes.length;
+                        
+                        if(votes.length % 2)
+                            this.median = votes[Math.floor(votes.length / 2)];
+                        else
+                            this.median = (votes[votes.length / 2] + votes[votes.length / 2 - 1] ) / 2;
+                        
+                        
+                        document.getElementById('statistics').classList.toggle('on', true);
+                    }else{
+                        document.getElementById('statistics').classList.toggle('on', false);
+                    }
+                }
+            }
+
             class Players{
                 constructor(){
                     this.players = [];
                     this.html = document.getElementById('players');
+                    this.statistics = new Statistics();
                 }
 
                 setPlayers(data){
@@ -163,11 +218,15 @@
                 }
 
                 setVoting(voting) {
+                    var votes = [];
                     voting.forEach(vote => {
                         var player = this.players.find(x => x.id == vote.playerId);
-                        if(player)
+                        if(player){
                             player.vote = vote.vote;
+                            votes.push(+vote.vote);
+                        }
                     })
+                    this.statistics.setStatistics(votes);
                 }
             }
 
@@ -276,7 +335,7 @@
                 constructor(connection) {
                     super(connection, 'username');
                     if(!this.username)
-                        this.dlg.showModal();
+                        this.showDialog();
                 }
 
                 get username(){
@@ -287,7 +346,9 @@
                     localStorage['username'] = name;
                     this.connection.updateUsername();
                 }
-
+                showDialog(){
+                    this.dlg.showModal();
+                }
             }
 
             function init()
@@ -301,15 +362,29 @@
                 let roomName = params.get('id');
                 document.title = `Kambarys ${roomName}`;
                 document.getElementById('title').innerText = document.title;
+
             }
         </script>
         <style>
+
+            .loading {
+                display: none;
+                text-align: center;
+            }
+
+            body.offline > * {
+                display: none;
+            }
+
+            body.offline > .loading {
+                display: block;
+            }
 
             input, button {
                 font-size: 1em;
             }
 
-            #voting > button, .change-cards{
+            #voting > button {
                 border: 1px solid black;
                 border-radius: 10px;
                 padding: 1em;
@@ -326,7 +401,7 @@
                 background-color: darkred;
             }
 
-            #voting.ended .start, #voting.ended .change-cards{
+            #voting.ended .start, #voting.ended .change-cards, #voting.ended .change-name{
                 display: inline;
             }
             #voting.in_progress .end {
@@ -349,28 +424,34 @@
             }
 
             #players .vote {
-                height: 7em;
+                height: 2em;
                 width: 100%;
-                border: 0.1em solid black;
+                border: 0.05em solid black;
                 border-radius: 10%;
                 justify-content: center;
                 align-items: center;
                 display: flex;
-                background-color: lightgray;
-                background-image: repeating-linear-gradient(45deg, rgba(227,227,255,1) 11%, rgba(227,226,255,1) 19%, rgba(245,245,255,1) 19%, rgba(245,245,255,1) 27%);
+                background-color: #eee;
                 box-sizing: border-box;
+                font-size: 3em;
+                font-weight: bold;
             }
             
             #players .vote.voted {
-                border: 0.5em solid blue;
+                border: 0.2em solid blue;
             }
             
+            .in_progress #players .vote.voted {
+                background-image: repeating-linear-gradient(45deg, rgba(227,227,255,1) 11%, rgba(227,226,255,1) 19%, rgba(245,245,255,1) 19%, rgba(245,245,255,1) 27%);
+            }
+
             .in_progress #players .vote {
                 color: transparent;
             }
 
             #players .me .name {
                 font-weight: bold;
+                font-style: italic;
             }
 
             #players .name {
@@ -379,6 +460,22 @@
 
             #voting.ended + .choices{
                 display: none;
+            }
+            
+            #statistics {
+                display: none;
+                border-collapse: collapse;
+                margin-bottom: 1em;
+            }
+
+            #statistics caption{ display: none; }
+            #statistics th {
+                font-style: italic;
+            }
+            #statistics th::after{ content: ':'; }
+
+            #voting.ended #statistics.on {
+                display: table;
             }
 
             #choices {
@@ -397,6 +494,7 @@
                 display: flex;
                 align-items: center;
                 justify-content: center;
+                user-select: none;
             }
 
             #choices > div.selected {
@@ -412,7 +510,42 @@
             
         </style>
     </head>
-    <body onload="init()">
+    <body onload="init()" class="offline">
+        <div class="loading">
+            Jungiuosi... <br/>
+            <svg width="120" height="30" viewBox="0 0 120 30" xmlns="http://www.w3.org/2000/svg" fill="#333">
+                <circle cx="15" cy="15" r="15">
+                    <animate attributeName="r" from="15" to="15"
+                             begin="0s" dur="0.8s"
+                             values="15;9;15" calcMode="linear"
+                             repeatCount="indefinite" />
+                    <animate attributeName="fill-opacity" from="1" to="1"
+                             begin="0s" dur="0.8s"
+                             values="1;.5;1" calcMode="linear"
+                             repeatCount="indefinite" />
+                </circle>
+                <circle cx="60" cy="15" r="9" fill-opacity="0.3">
+                    <animate attributeName="r" from="9" to="9"
+                             begin="0s" dur="0.8s"
+                             values="9;15;9" calcMode="linear"
+                             repeatCount="indefinite" />
+                    <animate attributeName="fill-opacity" from="0.5" to="0.5"
+                             begin="0s" dur="0.8s"
+                             values=".5;1;.5" calcMode="linear"
+                             repeatCount="indefinite" />
+                </circle>
+                <circle cx="105" cy="15" r="15">
+                    <animate attributeName="r" from="15" to="15"
+                             begin="0s" dur="0.8s"
+                             values="15;9;15" calcMode="linear"
+                             repeatCount="indefinite" />
+                    <animate attributeName="fill-opacity" from="1" to="1"
+                             begin="0s" dur="0.8s"
+                             values="1;.5;1" calcMode="linear"
+                             repeatCount="indefinite" />
+                </circle>
+            </svg>
+        </div>
         <h1 id="title"></h1>
         <dialog id="username-dlg">
             <form method="dialog">
@@ -430,7 +563,7 @@
             <form method="dialog">
                 <label>
                     Kortelės
-                    <input type="text" id ="choices-txt" value="0.5/1/2/3" autocomplete="work">
+                    <input type="text" id ="choices-txt" value="0.5/1/2/3/5/8/13/21" autocomplete="work">
                     <br />
                     <button value="ok">OK</button>
                     <button value="cancel">Cancel</button>
@@ -440,10 +573,30 @@
 
         <div id="voting">
             <h2>Žmonės</h2>
-            <div id="players"></div>       
+            <div id="players"></div>
+            <table id="statistics">
+                <caption>Statistika</caption>
+                <tbody>
+                    <tr>
+                        <th>Vidurkis</th>
+                        <td id="average"></td>
+                    </tr>
+                    <tr>
+                        <th>Mediana</th>
+                        <td id="median"></td>
+                    </tr>
+                    <!-- 
+                    <tr>
+                        <th>Moda</th>
+                        <td id="mode"></td>
+                    </tr>
+                    -->
+                </tbody>
+            </table>
             <button type="button" class="start" onclick="connection.sendStartVoting()">Pradėti naują balsavimą</button>
             <button type="button" class="end" onclick="connection.sendEndVoting()">Baigti balsavimą</button>
-            <button class="change-cards" onclick="connection.choices.showDialog()">Keisti kortas</button>
+            <button type="button" class="change-name" onclick="connection.user.showDialog()">Keisti vardą</button>
+            <button type="button" class="change-cards" onclick="connection.choices.showDialog()">Keisti kortas</button>
         </div>
 
         <div class="choices">
