@@ -151,6 +151,11 @@ public class Participant
             Console.WriteLine($"Participant {Id} disconnected: " +  ex.Message);
             return null;
         }
+        catch(Exception ex)
+        {
+            Console.WriteLine($"Get unknown exception {ex.GetType()}: " +  ex.Message);
+            return null;
+        }
 
         var text = Encoding.UTF8.GetString(data.ToArray());
         Console.WriteLine($"Participant {Id} reveived: '{text ?? "<null>"}'");
