@@ -593,16 +593,18 @@
                     -->
                 </tbody>
             </table>
+
+            <div class="choices">
+                <h2>Balsuoti</h2>
+                <div id="choices"></div>
+            </div>
+
             <button type="button" class="start" onclick="connection.sendStartVoting()">Pradėti naują balsavimą</button>
             <button type="button" class="end" onclick="connection.sendEndVoting()">Baigti balsavimą</button>
             <button type="button" class="change-name" onclick="connection.user.showDialog()">Keisti vardą</button>
             <button type="button" class="change-cards" onclick="connection.choices.showDialog()">Keisti kortas</button>
         </div>
 
-        <div class="choices">
-            <h2>Balsuoti</h2>
-            <div id="choices"></div>
-        </div>
         
     </body>
 </html>
